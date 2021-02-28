@@ -2,10 +2,9 @@ import os
 import sys
 import datetime
 import time
-import shapely
 import ntpath
+import statistics
 
-from shapely.geometry import Polygon
 from osgeo import gdal
 from osgeo import ogr
 
@@ -46,6 +45,7 @@ def write_message(message):
 
 
 # Checks the input data for errors
+# Stops the script if any errors is found
 def perform_checks():
     stop_script = False
 
@@ -76,6 +76,9 @@ def read_vector_file(vector_file):
     data_p = ogr.GetDriverByName("GPKG").CreateDataSource(OUTPUT + "points.gpkg")
     lyr_p = data_p.CreateLayer('point', geom_type=ogr.wkbPoint)
 
+    data_f = ogr.GetDriverByName("GPKG").CreateDataSource(OUTPUT + "final.gpkg")
+    lyr_f = data_f.CreateLayer('polygon2d', geom_type=ogr.wkbPolygon)
+
     point_geom = ogr.Geometry(ogr.wkbPoint)
     for feat in vector_layers:
         geom = feat.GetGeometryRef()
@@ -86,18 +89,47 @@ def read_vector_file(vector_file):
         new_feat.SetGeometry(ogr.CreateGeometryFromWkt(str(geom_buf)))
         lyr.CreateFeature(new_feat)
 
-        write_message("poly: " + str(geom_buf))
-
         cnt = ring.GetPointCount()
         write_message("Vertice cnt: " + str(cnt))
+        
+        #list_distances = []
+        #for i in range(0, cnt):
+        #    point = ring.GetPoint(i)
+        #    point_geom.AddPoint(point[0], point[1])
+
+        #    new_point = ogr.Feature(lyr_p.GetLayerDefn())
+        #    new_point.SetGeometry(ogr.CreateGeometryFromWkt(str(point_geom)))
+
+        #    distance = (geom_buf.Distance(point_geom))/0.00001
+        #    list_distances.append(distance)
+        
+        #std_dev = statistics.stdev(list_distances)
+        #write_message("std_dev: " + str(std_dev))
+
+        ring_spike_removed = ogr.Geometry(ogr.wkbLinearRing)
+
         for i in range(0, cnt):
             point = ring.GetPoint(i)
             point_geom.AddPoint(point[0], point[1])
 
             new_point = ogr.Feature(lyr_p.GetLayerDefn())
+            new_point.SetGeometry(ogr.CreateGeometryFromWkt(str(point_geom)))
 
+            distance = (geom_buf.Distance(point_geom))/0.00001
 
-    return spatial_ref, layer_extent
+            if distance < 20:
+                lyr_p.CreateFeature(new_point)
+                ring_spike_removed.AddPoint(point[0], point[1])
+            else:
+                write_message("Spike polygon vertice found (" + str(distance) + "m from polygon.)")
+
+        poly_spike_removed = ogr.Geometry(ogr.wkbPolygon)
+        poly_spike_removed.AddGeometry(ring_spike_removed)
+
+        new_poly = ogr.Feature(lyr_f.GetLayerDefn())
+        new_poly.SetGeometry(ogr.CreateGeometryFromWkt(str(poly_spike_removed)))
+
+        lyr_f.CreateFeature(new_poly)
 
 
 def main():
@@ -105,7 +137,7 @@ def main():
     if not stop_script:
         write_message("=======================Spike removal=======================")
 
-        coor_sys, extent = read_vector_file(POLYGONS)
+        read_vector_file(POLYGONS)
 
         write_message("=======================Spike removal successfull=======================")
     else:
