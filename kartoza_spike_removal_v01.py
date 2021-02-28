@@ -9,9 +9,8 @@ from shapely.geometry import Polygon
 from osgeo import gdal
 from osgeo import ogr
 
-#import fiona
-
 POLYGONS = "D:/Kartoza/qgis/spiky-polygons.gpkg"
+OUTPUT = "D:/Kartoza/output/"
 
 
 # Checks the extension of a given file
@@ -71,9 +70,20 @@ def read_vector_file(vector_file):
     spatial_ref = vector_layers.GetSpatialRef()
     layer_extent = vector_layers.GetExtent()
 
-    write_message("Feature count: " + str(layer_cnt))
+    data = ogr.GetDriverByName("GPKG").CreateDataSource(OUTPUT + "copy.gpkg")
+    lyr = data.CreateLayer('polygon2d', geom_type=ogr.wkbPolygon)
 
-    return vector_layers
+    for feat in vector_layers:
+        geom = feat.GetGeometryRef()
+        geom_buf = geom.Buffer(-10*0.00001)
+
+        test = geom.Distance(geom_buf)
+
+        new_feat = ogr.Feature(lyr.GetLayerDefn())
+        new_feat.SetGeometry(ogr.CreateGeometryFromWkt(str(geom_buf)))
+        lyr.CreateFeature(new_feat)
+
+    return spatial_ref, layer_extent
 
 
 def main():
@@ -81,10 +91,7 @@ def main():
     if not stop_script:
         write_message("=======================Spike removal=======================")
 
-        read_vector_file(POLYGONS)
-
-
-
+        coor_sys, extent = read_vector_file(POLYGONS)
 
         write_message("=======================Spike removal successfull=======================")
     else:
