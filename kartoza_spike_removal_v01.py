@@ -73,15 +73,29 @@ def read_vector_file(vector_file):
     data = ogr.GetDriverByName("GPKG").CreateDataSource(OUTPUT + "copy.gpkg")
     lyr = data.CreateLayer('polygon2d', geom_type=ogr.wkbPolygon)
 
+    data_p = ogr.GetDriverByName("GPKG").CreateDataSource(OUTPUT + "points.gpkg")
+    lyr_p = data_p.CreateLayer('point', geom_type=ogr.wkbPoint)
+
+    point_geom = ogr.Geometry(ogr.wkbPoint)
     for feat in vector_layers:
         geom = feat.GetGeometryRef()
-        geom_buf = geom.Buffer(-10*0.00001)
+        ring = geom.GetGeometryRef(0)
 
-        test = geom.Distance(geom_buf)
-
+        geom_buf = geom.Buffer(-10 * 0.00001)
         new_feat = ogr.Feature(lyr.GetLayerDefn())
         new_feat.SetGeometry(ogr.CreateGeometryFromWkt(str(geom_buf)))
         lyr.CreateFeature(new_feat)
+
+        write_message("poly: " + str(geom_buf))
+
+        cnt = ring.GetPointCount()
+        write_message("Vertice cnt: " + str(cnt))
+        for i in range(0, cnt):
+            point = ring.GetPoint(i)
+            point_geom.AddPoint(point[0], point[1])
+
+            new_point = ogr.Feature(lyr_p.GetLayerDefn())
+
 
     return spatial_ref, layer_extent
 
