@@ -86,8 +86,6 @@ def read_vector_file(vector_file):
         new_feat.SetGeometry(ogr.CreateGeometryFromWkt(str(geom_buf)))
         lyr.CreateFeature(new_feat)
 
-        write_message("poly: " + str(geom_buf))
-
         cnt = ring.GetPointCount()
         write_message("Vertice cnt: " + str(cnt))
         for i in range(0, cnt):
@@ -95,7 +93,13 @@ def read_vector_file(vector_file):
             point_geom.AddPoint(point[0], point[1])
 
             new_point = ogr.Feature(lyr_p.GetLayerDefn())
+            new_point.SetGeometry(ogr.CreateGeometryFromWkt(str(point_geom)))
 
+            distance = geom_buf.Distance(point_geom)
+
+            write_message("Distance from polygon: " + str(distance/0.00001))
+
+            lyr_p.CreateFeature(new_point)
 
     return spatial_ref, layer_extent
 
