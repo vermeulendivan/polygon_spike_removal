@@ -8,8 +8,9 @@ import statistics
 from osgeo import gdal
 from osgeo import ogr
 
-POLYGONS = "D:/Kartoza/qgis/spiky-polygons.gpkg"
+POLYGONS = "D:/Kartoza/additional/multipolygon/test5.gpkg"
 OUTPUT = "D:/Kartoza/output/"
+OUTPUT_NAME = "test5_spikes_removed.gpkg"
 DISTANCE = 10  # Distance in meters
 Z_FACTOR = 0.00001  # 1 for projected, 0.00001 for geographic
 OVERWRITE = True
@@ -104,54 +105,114 @@ def polygon_spike_removal(vector_file):
         lyr_p = data_p.CreateLayer('point', geom_type=ogr.wkbPoint)
     
         # Final vector file with no spikes
-        data_f = ogr.GetDriverByName("GPKG").CreateDataSource(OUTPUT + "polygons_no_spikes.gpkg")
+        data_f = ogr.GetDriverByName("GPKG").CreateDataSource(OUTPUT + OUTPUT_NAME)
         lyr_f = data_f.CreateLayer('polygon2d', geom_type=ogr.wkbPolygon)
     
         point_geom = ogr.Geometry(ogr.wkbPoint)
         # Performs spike removal on each polygon
         for feat in vector_layers:
             geom = feat.GetGeometryRef()
-            ring = geom.GetGeometryRef(0)  # Polygon boundary
-    
-            geom_buf = geom.Buffer(-1 * DISTANCE * Z_FACTOR)
-            new_feat = ogr.Feature(lyr.GetLayerDefn())
-            new_feat.SetGeometry(ogr.CreateGeometryFromWkt(str(geom_buf)))
-            lyr.CreateFeature(new_feat)
-    
-            cnt = ring.GetPointCount()
-            write_message("Vertice count: " + str(cnt))
-    
-            ring_spike_removed = ogr.Geometry(ogr.wkbLinearRing)
-            removed_point_count = 0
-            # Checks each of the polygon vertices
-            for i in range(0, cnt):
-                point = ring.GetPoint(i)
-                point_geom.AddPoint(point[0], point[1])
-    
-                new_point = ogr.Feature(lyr_p.GetLayerDefn())
-                new_point.SetGeometry(ogr.CreateGeometryFromWkt(str(point_geom)))
+            # Spike removal can only be performed on a feature/polygon which has geometry/exists
+            if geom is not None:
+                # Geometry type: polygons, multipolygon, etc.
+                input_geom_type = str(geom.GetGeometryName()).lower()
+                write_message("Geometry type: " + str(input_geom_type))
 
-                # Converts the distance based on the Z_FACTOR variable
-                distance = (geom_buf.Distance(point_geom)) / Z_FACTOR
-
-                # If the point is a large distance from the negative buffer polygons, its likely a spike
-                if distance < DISTANCE * 2:  # Adds the point if its not a spike
-                    lyr_p.CreateFeature(new_point)
-                    ring_spike_removed.AddPoint(point[0], point[1])
-                else:  # Remove the point
-                    write_message("Spike polygon vertice found (" + str(distance) + "m from polygon.)")
-                    removed_point_count = removed_point_count + 1
+                if input_geom_type == "polygon" or input_geom_type == "curvepolygon":
+                    write_message("Singlepart polygons.")
+                    ring = geom.GetGeometryRef(0)  # Polygon boundary
     
-            write_message(str(removed_point_count) + " vertice(s) removed from the polygon.")
+                    # Creates a negative buffer to remove slivers from outlier vertices
+                    geom_buf = geom.Buffer(-1 * DISTANCE * Z_FACTOR)
+                    new_feat = ogr.Feature(lyr.GetLayerDefn())
+                    new_feat.SetGeometry(ogr.CreateGeometryFromWkt(str(geom_buf)))
+                    lyr.CreateFeature(new_feat)
+    
+                    cnt = ring.GetPointCount()
+                    write_message("Vertice count: " + str(cnt))
 
-            # Convert the remaining vertices to a polygon boundary
-            poly_spike_removed = ogr.Geometry(ogr.wkbPolygon)
-            poly_spike_removed.AddGeometry(ring_spike_removed)
+                    ring_spike_removed = ogr.Geometry(ogr.wkbLinearRing)
+                    removed_point_count = 0
+                    # Checks each of the polygon vertices
+                    for i in range(0, cnt):
+                        point = ring.GetPoint(i)
+                        point_geom.AddPoint(point[0], point[1])
+    
+                        new_point = ogr.Feature(lyr_p.GetLayerDefn())
+                        new_point.SetGeometry(ogr.CreateGeometryFromWkt(str(point_geom)))
+    
+                        # Converts the distance based on the Z_FACTOR variable
+                        distance = (geom_buf.Distance(point_geom)) / Z_FACTOR
+    
+                        # If the point is a large distance from the negative buffer polygons, its likely a spike
+                        if distance < DISTANCE * 10:  # Adds the point if its not a spike
+                            lyr_p.CreateFeature(new_point)
+                            ring_spike_removed.AddPoint(point[0], point[1])
+                        else:  # Remove the point
+                            write_message("Spike polygon vertice found (" + str(distance) + "m from polygon.)")
+                            removed_point_count = removed_point_count + 1
+    
+                    write_message(str(removed_point_count) + " vertice(s) removed from the polygon.")
+    
+                    # Convert the remaining vertices to a polygon boundary
+                    poly_spike_removed = ogr.Geometry(ogr.wkbPolygon)
+                    poly_spike_removed.AddGeometry(ring_spike_removed)
+    
+                    # Creates the spike removed polygon and adds it to the vector file
+                    new_poly = ogr.Feature(lyr_f.GetLayerDefn())
+                    new_poly.SetGeometry(ogr.CreateGeometryFromWkt(str(poly_spike_removed)))
+                    lyr_f.CreateFeature(new_poly)
+                elif input_geom_type == "multipolygon" or input_geom_type == "multisurface":
+                    write_message("Multipart polygons.")
+                    multi_polygons = geom.GetGeometryRef(0)  # Polygon boundary
+                    ring = multi_polygons.GetGeometryRef(0)
 
-            # Creates the spike removed polygon and adds it to the vector file
-            new_poly = ogr.Feature(lyr_f.GetLayerDefn())
-            new_poly.SetGeometry(ogr.CreateGeometryFromWkt(str(poly_spike_removed)))
-            lyr_f.CreateFeature(new_poly)
+                    # Creates a negative buffer to remove slivers from outlier vertices
+                    geom_buf = geom.Buffer(-1 * DISTANCE * Z_FACTOR)
+                    new_feat = ogr.Feature(lyr.GetLayerDefn())
+                    new_feat.SetGeometry(ogr.CreateGeometryFromWkt(str(geom_buf)))
+                    lyr.CreateFeature(new_feat)
+
+                    cnt = ring.GetPointCount()
+                    write_message("Vertice count: " + str(cnt))
+
+                    ring_spike_removed = ogr.Geometry(ogr.wkbLinearRing)
+                    removed_point_count = 0
+                    # Checks each of the polygon vertices
+                    for i in range(0, cnt):
+                        point = ring.GetPoint(i)
+                        point_geom.AddPoint(point[0], point[1])
+
+                        new_point = ogr.Feature(lyr_p.GetLayerDefn())
+                        new_point.SetGeometry(ogr.CreateGeometryFromWkt(str(point_geom)))
+
+                        # Converts the distance based on the Z_FACTOR variable
+                        distance = (geom_buf.Distance(point_geom)) / Z_FACTOR
+
+                        # If the point is a large distance from the negative buffer polygons, its likely a spike
+                        if distance < DISTANCE * 10:  # Adds the point if its not a spike
+                            lyr_p.CreateFeature(new_point)
+                            ring_spike_removed.AddPoint(point[0], point[1])
+                        else:  # Remove the point
+                            write_message("Spike polygon vertice found (" + str(distance) + "m from polygon.)")
+                            removed_point_count = removed_point_count + 1
+
+                    write_message(str(removed_point_count) + " vertice(s) removed from the polygon.")
+
+                    # Convert the remaining vertices to a polygon boundary
+                    poly_spike_removed = ogr.Geometry(ogr.wkbPolygon)
+                    poly_spike_removed.AddGeometry(ring_spike_removed)
+
+                    # Creates the spike removed polygon and adds it to the vector file
+                    new_poly = ogr.Feature(lyr_f.GetLayerDefn())
+                    new_poly.SetGeometry(ogr.CreateGeometryFromWkt(str(poly_spike_removed)))
+                    lyr_f.CreateFeature(new_poly)
+                else:
+                    write_message("ERROR: Incorrect geometry type: " + str(input_geom_type) +
+                                  ". Should be: polygon, multipolygon, curve polygon or multisurface polygon.")
+                    break
+            else:  # If the polygon has no geometry, it is skipped
+                write_message("WARNING: Empty feature found. Will be skipped.")
     else:  # If the vector file is empty no spike removal can/will be performed
         write_message("Vector file (" + vector_file + ") has no features/polygons.")
 
