@@ -10,6 +10,9 @@ from osgeo import ogr
 
 POLYGONS = "D:/Kartoza/qgis/spiky-polygons.gpkg"
 OUTPUT = "D:/Kartoza/output/"
+DISTANCE = 10  # Distance in meters
+Z_FACTOR = 0.00001  # 1 for projected, 0.00001 for geographic
+OVERWRITE = True
 
 
 # Checks the extension of a given file
@@ -56,91 +59,116 @@ def perform_checks():
     if os.path.exists(POLYGONS):
         if not check_extension(POLYGONS, ["gpkg"]):
             write_message("ERROR: Incorrect file type: " + str(POLYGONS))
+            stop_script = True
+
+    if not os.path.exists(OUTPUT):
+        write_message("ERROR: Output directory not found: " + str(OUTPUT))
+        stop_script = True
 
     return stop_script
 
 
-def read_vector_file(vector_file):
+# Checks if the temp folder exists, and then creates it if not
+def create_folder(folder):
+    # If the temp folder does not exist within the provided folder, create it
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+
+    return folder
+
+
+# Performs polygon spike removal
+def polygon_spike_removal(vector_file):
     filename = ntpath.basename(vector_file)
     write_message("Vector file: " + filename)
-    
-    file = ogr.Open(POLYGONS)
+
+    file = ogr.Open(vector_file)
     vector_layers = file.GetLayer(0)
     layer_cnt = len(vector_layers)
     spatial_ref = vector_layers.GetSpatialRef()
     layer_extent = vector_layers.GetExtent()
 
-    data = ogr.GetDriverByName("GPKG").CreateDataSource(OUTPUT + "copy.gpkg")
-    lyr = data.CreateLayer('polygon2d', geom_type=ogr.wkbPolygon)
+    # Checks if the vector layer consist of features/polygons
+    if layer_cnt > 0:
+        write_message("Polygon count: " + str(layer_cnt))
 
-    data_p = ogr.GetDriverByName("GPKG").CreateDataSource(OUTPUT + "points.gpkg")
-    lyr_p = data_p.CreateLayer('point', geom_type=ogr.wkbPoint)
+        temp_dir = OUTPUT + "temp/"
+        create_folder(temp_dir)
 
-    data_f = ogr.GetDriverByName("GPKG").CreateDataSource(OUTPUT + "final.gpkg")
-    lyr_f = data_f.CreateLayer('polygon2d', geom_type=ogr.wkbPolygon)
+        # Buffering
+        data = ogr.GetDriverByName("GPKG").CreateDataSource(temp_dir + "buffer.gpkg")
+        lyr = data.CreateLayer('polygon2d', geom_type=ogr.wkbPolygon)
+    
+        # Points/vertices
+        data_p = ogr.GetDriverByName("GPKG").CreateDataSource(temp_dir + "vertices.gpkg")
+        lyr_p = data_p.CreateLayer('point', geom_type=ogr.wkbPoint)
+    
+        # Final vector file with no spikes
+        data_f = ogr.GetDriverByName("GPKG").CreateDataSource(OUTPUT + "polygons_no_spikes.gpkg")
+        lyr_f = data_f.CreateLayer('polygon2d', geom_type=ogr.wkbPolygon)
+    
+        point_geom = ogr.Geometry(ogr.wkbPoint)
+        # Performs spike removal on each polygon
+        for feat in vector_layers:
+            geom = feat.GetGeometryRef()
+            ring = geom.GetGeometryRef(0)  # Polygon boundary
+    
+            geom_buf = geom.Buffer(-1 * DISTANCE * Z_FACTOR)
+            new_feat = ogr.Feature(lyr.GetLayerDefn())
+            new_feat.SetGeometry(ogr.CreateGeometryFromWkt(str(geom_buf)))
+            lyr.CreateFeature(new_feat)
+    
+            cnt = ring.GetPointCount()
+            write_message("Vertice count: " + str(cnt))
+    
+            ring_spike_removed = ogr.Geometry(ogr.wkbLinearRing)
+            removed_point_count = 0
+            # Checks each of the polygon vertices
+            for i in range(0, cnt):
+                point = ring.GetPoint(i)
+                point_geom.AddPoint(point[0], point[1])
+    
+                new_point = ogr.Feature(lyr_p.GetLayerDefn())
+                new_point.SetGeometry(ogr.CreateGeometryFromWkt(str(point_geom)))
 
-    point_geom = ogr.Geometry(ogr.wkbPoint)
-    for feat in vector_layers:
-        geom = feat.GetGeometryRef()
-        ring = geom.GetGeometryRef(0)
+                # Converts the distance based on the Z_FACTOR variable
+                distance = (geom_buf.Distance(point_geom)) / Z_FACTOR
 
-        geom_buf = geom.Buffer(-10 * 0.00001)
-        new_feat = ogr.Feature(lyr.GetLayerDefn())
-        new_feat.SetGeometry(ogr.CreateGeometryFromWkt(str(geom_buf)))
-        lyr.CreateFeature(new_feat)
+                # If the point is a large distance from the negative buffer polygons, its likely a spike
+                if distance < DISTANCE * 2:  # Adds the point if its not a spike
+                    lyr_p.CreateFeature(new_point)
+                    ring_spike_removed.AddPoint(point[0], point[1])
+                else:  # Remove the point
+                    write_message("Spike polygon vertice found (" + str(distance) + "m from polygon.)")
+                    removed_point_count = removed_point_count + 1
+    
+            write_message(str(removed_point_count) + " vertice(s) removed from the polygon.")
 
-        cnt = ring.GetPointCount()
-        write_message("Vertice cnt: " + str(cnt))
-        
-        #list_distances = []
-        #for i in range(0, cnt):
-        #    point = ring.GetPoint(i)
-        #    point_geom.AddPoint(point[0], point[1])
+            # Convert the remaining vertices to a polygon boundary
+            poly_spike_removed = ogr.Geometry(ogr.wkbPolygon)
+            poly_spike_removed.AddGeometry(ring_spike_removed)
 
-        #    new_point = ogr.Feature(lyr_p.GetLayerDefn())
-        #    new_point.SetGeometry(ogr.CreateGeometryFromWkt(str(point_geom)))
-
-        #    distance = (geom_buf.Distance(point_geom))/0.00001
-        #    list_distances.append(distance)
-        
-        #std_dev = statistics.stdev(list_distances)
-        #write_message("std_dev: " + str(std_dev))
-
-        ring_spike_removed = ogr.Geometry(ogr.wkbLinearRing)
-
-        for i in range(0, cnt):
-            point = ring.GetPoint(i)
-            point_geom.AddPoint(point[0], point[1])
-
-            new_point = ogr.Feature(lyr_p.GetLayerDefn())
-            new_point.SetGeometry(ogr.CreateGeometryFromWkt(str(point_geom)))
-
-            distance = (geom_buf.Distance(point_geom))/0.00001
-
-            if distance < 20:
-                lyr_p.CreateFeature(new_point)
-                ring_spike_removed.AddPoint(point[0], point[1])
-            else:
-                write_message("Spike polygon vertice found (" + str(distance) + "m from polygon.)")
-
-        poly_spike_removed = ogr.Geometry(ogr.wkbPolygon)
-        poly_spike_removed.AddGeometry(ring_spike_removed)
-
-        new_poly = ogr.Feature(lyr_f.GetLayerDefn())
-        new_poly.SetGeometry(ogr.CreateGeometryFromWkt(str(poly_spike_removed)))
-
-        lyr_f.CreateFeature(new_poly)
+            # Creates the spike removed polygon and adds it to the vector file
+            new_poly = ogr.Feature(lyr_f.GetLayerDefn())
+            new_poly.SetGeometry(ogr.CreateGeometryFromWkt(str(poly_spike_removed)))
+            lyr_f.CreateFeature(new_poly)
+    else:  # If the vector file is empty no spike removal can/will be performed
+        write_message("Vector file (" + vector_file + ") has no features/polygons.")
 
 
+# Main
 def main():
+    # Checks if there is any problems with the input data
     stop_script = perform_checks()
-    if not stop_script:
+
+    if not stop_script:  # perform_checks found no issues
         write_message("=======================Spike removal=======================")
 
-        read_vector_file(POLYGONS)
+        # Performs spike removal on the provided polygon vector file
+        polygon_spike_removal(POLYGONS)
 
-        write_message("=======================Spike removal successfull=======================")
-    else:
+        write_message("=======================Spike removal successful=======================")
+    else:  # Error found by the perform_checks method
         write_message("=======================Script not executed=======================")
 
 
