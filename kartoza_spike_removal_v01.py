@@ -6,12 +6,12 @@ import ntpath
 
 from osgeo import ogr
 
-POLYGONS = "D:/Kartoza/additional/multipolygon/test8.gpkg"
-OUTPUT = "D:/Kartoza/output/"
-OUTPUT_NAME = "test8_spikes_removed.gpkg"
+POLYGONS = "D:/Kartoza/additional/multisurface/test7.gpkg"  # Input geopackage (*.gpkg) file
+OUTPUT = "D:/Kartoza/output/"  # Folder to which the output will be written
+OUTPUT_NAME = "test7_spikes_removed.gpkg"  # Output geopackage (*.gpkg) filename
 DISTANCE = 10  # Distance in meters
 Z_FACTOR = 0.00001  # 1 for projected, 0.00001 for geographic
-OVERWRITE = True
+OVERWRITE = True  # Deletes the existing output file if it exists
 
 
 # Checks the extension of a given file
@@ -111,6 +111,9 @@ def polygon_spike_removal(vector_file):
         # Points/vertices
         data_p = ogr.GetDriverByName("GPKG").CreateDataSource(temp_dir + "vertices.gpkg")
         lyr_p = data_p.CreateLayer('point', geom_type=ogr.wkbPoint)
+
+        # Temp
+        lyr_f = None
 
         output_file = OUTPUT + OUTPUT_NAME
         # Performs spike removal on each polygon
@@ -257,7 +260,7 @@ def polygon_spike_removal(vector_file):
         write_message("Vector file (" + vector_file + ") has no features/polygons.")
 
 
-# Main
+# Calls the perform_checks and polygon_spike_removal methods
 def main():
     # Checks if there is any problems with the input data
     stop_script = perform_checks()
