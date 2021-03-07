@@ -1,17 +1,9 @@
 import os
-import sys
 import datetime
 import time
 import ntpath
 
 from osgeo import ogr
-
-POLYGONS = "D:/Kartoza/additional/multisurface/test7.gpkg"  # Input geopackage (*.gpkg) file
-OUTPUT = "D:/Kartoza/output/"  # Folder to which the output will be written
-OUTPUT_NAME = "test7_spikes_removed.gpkg"  # Output geopackage (*.gpkg) filename
-DISTANCE = 10  # Distance in meters
-Z_FACTOR = 0.00001  # 1 for projected, 0.00001 for geographic
-OVERWRITE = True  # Deletes the existing output file if it exists
 
 
 # Checks the extension of a given file
@@ -48,35 +40,46 @@ def write_message(message):
 
 # Checks the input data for errors
 # Stops the script if any errors is found
-def perform_checks():
+def perform_checks(polygons, out_folder, out_name, distance, overwrite):
     stop_script = False
 
-    if not os.path.exists(POLYGONS):
-        write_message("ERROR: The polygons vector file does not exist: " + str(POLYGONS))
+    if not os.path.exists(polygons):
+        write_message("ERROR: The polygons vector file does not exist: " + str(polygons))
         stop_script = True
 
-    if os.path.exists(POLYGONS):
-        if not check_extension(POLYGONS, ["gpkg"]):
-            write_message("ERROR: Incorrect file type: " + str(POLYGONS))
+    if os.path.exists(polygons):
+        if not check_extension(polygons, ["gpkg"]):
+            write_message("ERROR: Incorrect file type: " + str(polygons))
             stop_script = True
 
-    if not os.path.exists(OUTPUT):
-        write_message("ERROR: Output directory not found: " + str(OUTPUT))
+    if not os.path.exists(out_folder):
+        write_message("ERROR: Output directory not found: " + str(out_folder))
         stop_script = True
+    else:
+        s_len = len(out_folder)
+        s_char = out_folder[s_len - 1]
 
-    if not check_extension(OUTPUT_NAME, ["gpkg"]):
+        if s_char != "/":
+            write_message("change")
+            out_folder = out_folder + "\\"
+
+    if not check_extension(out_name, ["gpkg"]):
         write_message("ERROR: Output file name has to be geopackage format (*.gpkg).")
         stop_script = True
 
-    output_file = OUTPUT + OUTPUT_NAME
+    output_file = out_folder + out_name
     if os.path.exists(output_file):
-        if OVERWRITE:
+        if overwrite:
             os.remove(output_file)
         else:
             write_message("ERROR: Output file already exists: " + str(output_file))
             stop_script = True
 
-    return stop_script
+    if distance <= 0:
+        write_message("ERROR: Buffer distance needs to be greater than zero: " + str(distance))
+        stop_script = True
+
+    return stop_script, out_folder
 
 
 # Checks if the temp folder exists, and then creates it if not
@@ -89,7 +92,13 @@ def create_folder(folder):
 
 
 # Performs polygon spike removal
-def polygon_spike_removal(vector_file):
+def polygon_spike_removal(vector_file, output_folder, output_name, buf_distance, z_factor, overwrite):
+    stop_script, output_folder = perform_checks(vector_file, output_folder, output_name, buf_distance, overwrite)
+
+    if stop_script:
+        write_message("Errors found in input parameters.")
+        return
+
     filename = ntpath.basename(vector_file)
     write_message("Vector file: " + filename)
 
@@ -101,7 +110,7 @@ def polygon_spike_removal(vector_file):
     if layer_cnt > 0:
         write_message("Polygon count: " + str(layer_cnt))
 
-        temp_dir = OUTPUT + "temp/"
+        temp_dir = output_folder + "temp/"
         create_folder(temp_dir)
 
         # Buffering
@@ -115,7 +124,7 @@ def polygon_spike_removal(vector_file):
         # Temp
         lyr_f = None
 
-        output_file = OUTPUT + OUTPUT_NAME
+        output_file = output_folder + output_name
         # Performs spike removal on each polygon
         for feat in vector_layers:
             geom = feat.GetGeometryRef()
@@ -141,11 +150,11 @@ def polygon_spike_removal(vector_file):
                     ring = geom.GetGeometryRef(0)  # Polygon boundary
 
                     # Creates a negative buffer to remove slivers from outlier vertices
-                    geom_buf = geom.Buffer(-1 * DISTANCE * Z_FACTOR)
+                    geom_buf = geom.Buffer(-1 * buf_distance * z_factor)
                     new_feat = ogr.Feature(lyr.GetLayerDefn())
                     new_feat.SetGeometry(ogr.CreateGeometryFromWkt(str(geom_buf)))
                     lyr.CreateFeature(new_feat)
-    
+
                     cnt = ring.GetPointCount()
                     write_message("Vertice count: " + str(cnt))
 
@@ -156,27 +165,27 @@ def polygon_spike_removal(vector_file):
                     for i in range(0, cnt):
                         point = ring.GetPoint(i)
                         point_geom.AddPoint(point[0], point[1])
-    
+
                         new_point = ogr.Feature(lyr_p.GetLayerDefn())
                         new_point.SetGeometry(ogr.CreateGeometryFromWkt(str(point_geom)))
-    
+
                         # Converts the distance based on the Z_FACTOR variable
-                        distance = (geom_buf.Distance(point_geom)) / Z_FACTOR
-    
+                        distance = (geom_buf.Distance(point_geom)) / z_factor
+
                         # If the point is a large distance from the negative buffer polygons, its likely a spike
-                        if distance < DISTANCE * 10:  # Adds the point if its not a spike
+                        if distance < buf_distance * 10:  # Adds the point if its not a spike
                             lyr_p.CreateFeature(new_point)
                             ring_spike_removed.AddPoint(point[0], point[1])
                         else:  # Remove the point
                             write_message("Spike polygon vertice found (" + str(distance) + "m from polygon.)")
                             removed_point_count = removed_point_count + 1
-    
+
                     write_message(str(removed_point_count) + " vertice(s) removed from the polygon.")
-    
+
                     # Convert the remaining vertices to a polygon boundary
                     poly_spike_removed = ogr.Geometry(ogr.wkbPolygon)
                     poly_spike_removed.AddGeometry(ring_spike_removed)
-    
+
                     # Creates the spike removed polygon and adds it to the vector file
                     new_poly = ogr.Feature(lyr_f.GetLayerDefn())
                     new_poly.SetGeometry(ogr.CreateGeometryFromWkt(str(poly_spike_removed)))
@@ -206,14 +215,14 @@ def polygon_spike_removal(vector_file):
                         ring = multi_polygon.GetGeometryRef(0)  # Polygon boundary
 
                         # Creates a negative buffer to remove slivers from outlier vertices
-                        geom_buf = geom.Buffer(-1 * DISTANCE * Z_FACTOR)
+                        geom_buf = geom.Buffer(-1 * buf_distance * z_factor)
                         new_feat = ogr.Feature(lyr.GetLayerDefn())
                         new_feat.SetGeometry(ogr.CreateGeometryFromWkt(str(geom_buf)))
                         lyr.CreateFeature(new_feat)
 
                         cnt = ring.GetPointCount()
                         write_message("Vertice count: " + str(cnt))
-    
+
                         ring_spike_removed = ogr.Geometry(ogr.wkbLinearRing)
                         removed_point_count = 0
                         point_geom = ogr.Geometry(ogr.wkbPoint)
@@ -226,10 +235,10 @@ def polygon_spike_removal(vector_file):
                             new_point.SetGeometry(ogr.CreateGeometryFromWkt(str(point_geom)))
 
                             # Converts the distance based on the Z_FACTOR value
-                            distance = (geom_buf.Distance(point_geom)) / Z_FACTOR
+                            distance = (geom_buf.Distance(point_geom)) / z_factor
 
                             # If the point is a large distance from the negative buffer polygons, its likely a spike
-                            if distance < DISTANCE * 10:  # Adds the point if its not a spike
+                            if distance < buf_distance * 10:  # Adds the point if its not a spike
                                 lyr_p.CreateFeature(new_point)
                                 ring_spike_removed.AddPoint(point[0], point[1])
                             else:  # Remove the point
@@ -258,22 +267,3 @@ def polygon_spike_removal(vector_file):
                 write_message("WARNING: Empty feature found. Will be skipped.")
     else:  # If the vector file is empty no spike removal can/will be performed
         write_message("Vector file (" + vector_file + ") has no features/polygons.")
-
-
-# Calls the perform_checks and polygon_spike_removal methods
-def main():
-    # Checks if there is any problems with the input data
-    stop_script = perform_checks()
-
-    if not stop_script:  # perform_checks found no issues
-        write_message("=======================Spike removal=======================")
-
-        # Performs spike removal on the provided polygon vector file
-        polygon_spike_removal(POLYGONS)
-
-        write_message("=======================Spike removal successful=======================")
-    else:  # Error found by the perform_checks method
-        write_message("=======================Script not executed=======================")
-
-
-main()
